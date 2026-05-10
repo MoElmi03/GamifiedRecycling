@@ -7,9 +7,12 @@ import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import Svg, { Path } from 'react-native-svg';
 import { ALL_CHALLENGES } from '../../lib/challenges';
 import { auth, db } from '../../lib/firebase';
+import { getPostcodeRank } from '../../lib/leaderboard';
 
 interface UserData {
   name: string;
+  firstName?: string;
+  postcode?: string;
   totalPoints: number;
   weeklyPoints: number;
   currentStreak: number;
@@ -18,30 +21,39 @@ interface UserData {
 }
 
 export default function HomeScreen() {
-  const [userData, setUserData] = useState<UserData | null>(null);
+  const [userData,         setUserData]         = useState<UserData | null>(null);
+  const [postcodeRank,     setPostcodeRank]     = useState<{ rank: number; total: number } | null>(null);
 
-  // 🌱 Real-time listener on the current user's Firestore document
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-
     const unsub = onSnapshot(doc(db, 'users', uid), (snap) => {
       if (snap.exists()) {
-        setUserData(snap.data() as UserData);
+        const d = snap.data() as UserData;
+        setUserData(d);
+        if (d.postcode) {
+          getPostcodeRank(uid, d.postcode).then(setPostcodeRank).catch(() => {});
+        }
       }
     });
     return unsub;
   }, []);
 
   const dailyChallenges = ALL_CHALLENGES.filter(c => c.type === 'daily');
-  const completed = userData?.completedChallenges ?? [];
-  const completedCount = dailyChallenges.filter(c => completed.includes(c.id)).length;
-  const progressPct = dailyChallenges.length > 0
+  const completed       = userData?.completedChallenges ?? [];
+  const completedCount  = dailyChallenges.filter(c => completed.includes(c.id)).length;
+  const progressPct     = dailyChallenges.length > 0
     ? Math.round((completedCount / dailyChallenges.length) * 100)
     : 0;
 
-  const greeting = getGreeting();
-  const name = userData?.name ?? '…';
+  const greeting   = getGreeting();
+  const displayName = userData?.firstName ?? userData?.name ?? '…';
+
+  function getOrdinal(n: number) {
+    const s = ['th','st','nd','rd'];
+    const v = n % 100;
+    return n + (s[(v-20)%10] || s[v] || s[0]);
+  }
 
   return (
     <View style={styles.container}>
@@ -50,8 +62,8 @@ export default function HomeScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>{greeting}, {name}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.greeting}>{greeting}, {displayName}</Text>
           <Text style={styles.streak}>
             {userData?.currentStreak
               ? `You're on a ${userData.currentStreak}-day recycling streak 🥇`
@@ -59,7 +71,7 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View style={styles.headerIcons}>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(tabs)/profile' as any)}>
             <Feather name="settings" size={18} color="#283618" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn}>
@@ -75,25 +87,25 @@ export default function HomeScreen() {
           {/* Stats Row */}
           <View style={styles.statsRow}>
             <StatCard label="Total Points" value={userData?.totalPoints ?? 0} emoji="⭐" />
-            <StatCard label="This Week" value={userData?.weeklyPoints ?? 0} emoji="📅" />
-            <StatCard label="Level" value={userData?.level ?? 1} emoji="🏅" />
+            <StatCard label="This Week"    value={userData?.weeklyPoints ?? 0} emoji="📅" />
+            <StatCard label="Level"        value={userData?.level ?? 1}        emoji="🏅" />
           </View>
 
-          {/* Goal Card */}
+          {/* Today's Goal */}
           <View style={styles.goalCard}>
             <Text style={styles.goalTitle}>🎯 Today's Goal</Text>
             <Text style={styles.goalSubtitle}>
               Complete {dailyChallenges.length} challenges ({completedCount}/{dailyChallenges.length} done)
             </Text>
             <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+              <View style={[styles.progressFill, { width: `${progressPct}%` as any }]} />
             </View>
             <Text style={styles.percent}>{progressPct}%</Text>
           </View>
 
           {/* Continue Journey */}
           <Text style={styles.sectionTitle}>Continue Your Journey</Text>
-          <TouchableOpacity style={styles.challengeCard} onPress={() => router.push('/(tabs)/challenge')}>
+          <TouchableOpacity style={styles.challengeCard} onPress={() => router.push('/(tabs)/challenge' as any)}>
             <View style={styles.challengeIcon}>
               <Text style={{ fontSize: 20 }}>♻️</Text>
             </View>
@@ -101,7 +113,7 @@ export default function HomeScreen() {
               <Text style={styles.challengeTitle}>
                 {completedCount === dailyChallenges.length
                   ? 'All done today! Check back tomorrow 🎉'
-                  : 'Tap to complete today\'s challenges'}
+                  : "Tap to complete today's challenges"}
               </Text>
               <Text style={styles.challengeSub}>
                 {completedCount === dailyChallenges.length
@@ -112,6 +124,37 @@ export default function HomeScreen() {
             <Feather name="chevron-right" size={22} color="#fff" />
           </TouchableOpacity>
 
+          {/* Neighbourhood Progress */}
+          {userData?.postcode && (
+            <>
+              <Text style={styles.sectionTitle}>Neighbourhood Progress</Text>
+              <TouchableOpacity
+                style={styles.neighbourCard}
+                onPress={() => router.push('/(tabs)/leaderboard' as any)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.neighbourLeft}>
+                  <Text style={styles.neighbourLabel}>Your area</Text>
+                  <Text style={styles.neighbourPostcode}>({userData.postcode})</Text>
+                  <Text style={styles.neighbourSubtitle}>
+                    {postcodeRank
+                      ? `is currently Rank #${postcodeRank.rank} out of ${postcodeRank.total}`
+                      : 'Loading your rank…'}
+                  </Text>
+                  <Text style={styles.neighbourCta}>
+                    Keep completing challenges to help your neighbourhood climb the leaderboard.
+                  </Text>
+                </View>
+                <View style={styles.neighbourBadge}>
+                  <Text style={styles.neighbourRankNum}>
+                    {postcodeRank ? `#${postcodeRank.rank}` : '…'}
+                  </Text>
+                  <Text style={styles.neighbourRankLbl}>Local</Text>
+                </View>
+              </TouchableOpacity>
+            </>
+          )}
+
           {/* Learn & Earn */}
           <Text style={styles.sectionTitle}>Learn & Earn</Text>
           <View style={styles.learnCard}>
@@ -120,14 +163,14 @@ export default function HomeScreen() {
               <Text style={styles.learnSub}>
                 Earn points by playing quizzes that test your recycling awareness and knowledge
               </Text>
-              <TouchableOpacity style={styles.gameBtn}>
+              <TouchableOpacity
+                style={styles.gameBtn}
+                onPress={() => router.push('/(tabs)/guide' as any)}
+              >
                 <Text style={styles.gameText}>🎮 Start a Game</Text>
               </TouchableOpacity>
             </View>
-            <Image
-              source={require('../../assets/images/HappyEarth.png')}
-              style={styles.learnImage}
-            />
+            <Image source={require('../../assets/images/HappyEarth.png')} style={styles.learnImage} />
           </View>
 
         </ScrollView>
@@ -165,34 +208,43 @@ function Sparkles() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#606C38' },
-  header: { paddingTop: 70, paddingHorizontal: 24, paddingBottom: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  greeting: { fontSize: 24, fontWeight: '700', color: '#FEFAE0' },
-  streak: { fontSize: 13, color: '#EAEFD0', marginTop: 4 },
-  headerIcons: { flexDirection: 'row', gap: 12 },
-  iconBtn: { backgroundColor: '#FEFAE0', padding: 10, borderRadius: 12 },
-  sheet: { flex: 1, backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20 },
-  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  statCard: { flex: 1, backgroundColor: '#606C38', borderRadius: 14, padding: 12, alignItems: 'center' },
-  statEmoji: { fontSize: 20, marginBottom: 4 },
-  statValue: { fontSize: 20, fontWeight: '700', color: '#FEFAE0' },
-  statLabel: { fontSize: 10, color: '#FEFAE0', textAlign: 'center', marginTop: 2 },
-  goalCard: { backgroundColor: '#F8F8F8', borderRadius: 18, padding: 18, marginBottom: 20 },
-  goalTitle: { fontSize: 16, fontWeight: '700', color: '#606C38' },
-  goalSubtitle: { fontSize: 13, color: '#7A7A7A', marginBottom: 10 },
-  progressTrack: { height: 10, backgroundColor: '#E6E6E6', borderRadius: 10, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: '#606C38', borderRadius: 10 },
-  percent: { textAlign: 'right', marginTop: 6, fontWeight: '600', color: '#606C38' },
-  sectionTitle: { fontSize: 18, fontWeight: '700', marginVertical: 12 },
-  challengeCard: { backgroundColor: '#606C38', padding: 18, borderRadius: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
-  challengeIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#FEFAE0', marginRight: 14, justifyContent: 'center', alignItems: 'center' },
-  challengeTitle: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  challengeSub: { color: '#EAEFD0', fontSize: 12 },
-  learnCard: { backgroundColor: '#606C38', borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 40 },
-  learnTitle: { color: '#fff', fontWeight: '700', marginBottom: 4 },
-  learnSub: { color: '#EAEFD0', fontSize: 12, marginBottom: 10 },
-  gameBtn: { backgroundColor: '#FEFAE0', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14, alignSelf: 'flex-start' },
-  gameText: { color: '#283618', fontWeight: '700' },
-  learnImage: { width: 90, height: 90, borderRadius: 40, marginLeft: 14 },
-  sparkles: { position: 'absolute', top: 0, right: 0, opacity: 0.8 },
+  container:          { flex: 1, backgroundColor: '#606C38' },
+  header:             { paddingTop: 70, paddingHorizontal: 24, paddingBottom: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  greeting:           { fontSize: 24, fontWeight: '700', color: '#FEFAE0' },
+  streak:             { fontSize: 13, color: '#EAEFD0', marginTop: 4 },
+  headerIcons:        { flexDirection: 'row', gap: 12 },
+  iconBtn:            { backgroundColor: '#FEFAE0', padding: 10, borderRadius: 12 },
+  sheet:              { flex: 1, backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20 },
+  statsRow:           { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  statCard:           { flex: 1, backgroundColor: '#606C38', borderRadius: 14, padding: 12, alignItems: 'center' },
+  statEmoji:          { fontSize: 20, marginBottom: 4 },
+  statValue:          { fontSize: 20, fontWeight: '700', color: '#FEFAE0' },
+  statLabel:          { fontSize: 10, color: '#FEFAE0', textAlign: 'center', marginTop: 2 },
+  goalCard:           { backgroundColor: '#F8F8F8', borderRadius: 18, padding: 18, marginBottom: 20 },
+  goalTitle:          { fontSize: 16, fontWeight: '700', color: '#606C38' },
+  goalSubtitle:       { fontSize: 13, color: '#7A7A7A', marginBottom: 10 },
+  progressTrack:      { height: 10, backgroundColor: '#E6E6E6', borderRadius: 10, overflow: 'hidden' },
+  progressFill:       { height: '100%', backgroundColor: '#606C38', borderRadius: 10 },
+  percent:            { textAlign: 'right', marginTop: 6, fontWeight: '600', color: '#606C38' },
+  sectionTitle:       { fontSize: 18, fontWeight: '700', marginVertical: 12 },
+  challengeCard:      { backgroundColor: '#606C38', padding: 18, borderRadius: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
+  challengeIcon:      { width: 42, height: 42, borderRadius: 21, backgroundColor: '#FEFAE0', marginRight: 14, justifyContent: 'center', alignItems: 'center' },
+  challengeTitle:     { color: '#fff', fontWeight: '700', fontSize: 15 },
+  challengeSub:       { color: '#EAEFD0', fontSize: 12 },
+  neighbourCard:      { backgroundColor: '#F0F5E8', borderRadius: 18, padding: 18, marginBottom: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#C5D9A0' },
+  neighbourLeft:      { flex: 1 },
+  neighbourLabel:     { fontSize: 14, color: '#606C38', fontWeight: '600' },
+  neighbourPostcode:  { fontSize: 16, color: '#283618', fontWeight: '800', marginBottom: 4 },
+  neighbourSubtitle:  { fontSize: 13, color: '#283618', fontWeight: '700', marginBottom: 6 },
+  neighbourCta:       { fontSize: 12, color: '#606C38', lineHeight: 17 },
+  neighbourBadge:     { width: 64, height: 64, borderRadius: 32, backgroundColor: '#606C38', justifyContent: 'center', alignItems: 'center', marginLeft: 12 },
+  neighbourRankNum:   { color: '#FEFAE0', fontSize: 18, fontWeight: '900' },
+  neighbourRankLbl:   { color: '#EAEFD0', fontSize: 10, fontWeight: '600' },
+  learnCard:          { backgroundColor: '#606C38', borderRadius: 20, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 40 },
+  learnTitle:         { color: '#fff', fontWeight: '700', marginBottom: 4 },
+  learnSub:           { color: '#EAEFD0', fontSize: 12, marginBottom: 10 },
+  gameBtn:            { backgroundColor: '#FEFAE0', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14, alignSelf: 'flex-start' },
+  gameText:           { color: '#283618', fontWeight: '700' },
+  learnImage:         { width: 90, height: 90, borderRadius: 40, marginLeft: 14 },
+  sparkles:           { position: 'absolute', top: 0, right: 0, opacity: 0.8 },
 });

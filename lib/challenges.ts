@@ -1,4 +1,4 @@
-// Unified challenge definitions — IDs match what progress.ts tracks
+// IDs match what progress.ts tracks
 import { arrayUnion, doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { computeLevel } from './progress';
@@ -36,7 +36,7 @@ export async function completeChallenge(
   const ref = doc(db, 'users', uid);
   await updateDoc(ref, {
     completedChallenges: arrayUnion(challenge.id),
-    level: computeLevel(0), // will be refreshed by real-time listener
+    level: computeLevel(0), // will be refreshed by using a real time listener
   });
   return true;
 }
